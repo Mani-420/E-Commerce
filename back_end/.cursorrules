@@ -1,0 +1,297 @@
+# .cursorrules (Backend Coding, Review, and Architecture Guidelines)
+
+**⚠️ MANDATORY: These rules are mandatory for all contributors and reviewers, including AI assistants. Always read and follow these rules strictly before implementing any code changes. The goal is to ensure a robust, maintainable, scalable, and reliable backend system that follows best practices and industry standards.**
+
+## 1. Core Principles
+
+- All code must be **maintainable**, **scalable**, and **reliable**.
+- Follow industry best practices and architectural principles:
+  - **DRY** (Don't Repeat Yourself): Centralize logic, avoid duplication.
+  - **KISS** (Keep It Simple, Stupid): Prefer simple, direct solutions over unnecessary complexity.
+  - **YAGNI** (You Aren't Gonna Need It): Only implement what is needed now, not speculative features.
+  - **SOLID** principles for object-oriented code.
+  - **Single Responsibility Principle**: Each module/class/function should have one clear purpose.
+  - **Separation of Concerns**: Keep business logic, data access, validation, and API orchestration separate.
+  - **Extensibility**: Design modules to be easily extended without modifying existing code.
+  - **Testability**: Write code that is easy to test in isolation with clear inputs and outputs.
+  - **Observability**: Ensure sufficient logging, error reporting, and monitoring hooks for production reliability.
+
+## 2. Project Structure
+
+- Place business logic in `src/app/services/`, data access in `src/app/repositories/`, and validation in `src/validators/`.
+- Do not mix database access and business logic in the same file.
+- Controllers should only handle API logic and route orchestration.
+- Organize files and folders for clarity and discoverability; avoid large, monolithic files.
+
+### 2.1 Repository DB Connection Rule
+
+- All repositories must accept their dependencies (such as `getDB`) via their constructor (dependency injection).
+- For transactional operations, repositories must accept a transaction or connection as an argument and use it if provided, otherwise default to `getDB()` from the injected dependency.
+- **Repositories must never import `getDB` (or other dependencies) directly.** Instead, receive them as constructor arguments.
+- This ensures consistency, testability, and proper resource management, and allows for easy mocking in tests.
+
+### 2.2 Repository Layer (Dependency Injection)
+
+- All database access must go through repository classes.
+- **All repositories must accept their dependencies (such as `getDB`) via their constructor (dependency injection).**
+- **Repositories must never import `getDB` (or other dependencies) directly.** Instead, receive them as constructor arguments.
+- For transactional operations, repositories must accept a transaction or connection as an argument and use it if provided, otherwise default to `getDB()` from the injected dependency.
+- Repositories should be stateless and reusable.
+- All repositories must be instantiated in the composition file with their dependencies injected.
+- **Anti-pattern:**
+  ```js
+  // ❌ Do NOT do this inside a repository:
+  const { getDB } = require("../../dbConnection");
+  ```
+- **Correct pattern:**
+  ```js
+  // ✅ Accept getDB via constructor:
+  class MyRepository {
+    constructor({ getDB }) {
+      this.getDB = getDB;
+    }
+    // ...
+  }
+  ```
+
+### 2.3 Service Layer (Dependency Injection)
+
+- All services must accept their dependencies (repositories, other services, utilities) via their constructor.
+- Services should never instantiate or import repositories directly.
+- All services must be instantiated in the composition file with their dependencies injected.
+- **Anti-pattern:**
+  ```js
+  // ❌ Do NOT do this inside a service:
+  const repo = new Repo();
+  ```
+- **Correct pattern:**
+  ```js
+  // ✅ Accept repo via constructor:
+  class MyService {
+    constructor({ repo }) {
+      this.repo = repo;
+    }
+    // ...
+  }
+  ```
+
+### 2.4 Composition Pattern for Dependency Injection
+
+- Each module (domain) should have its own composition file (e.g., `src/app/composition/addonComposition.js`).
+- The composition file should instantiate and wire together the controller, service, and repository for that module, and export them as needed:
+  - Export only the controller, service, and repository instances that are part of that module's public API.
+  - Do **not** export cross-domain dependencies (e.g., a repository used by multiple modules) from another module's composition file. Instead, instantiate and wire them in their own module's composition file.
+- This ensures clear module boundaries, prevents accidental cross-domain coupling, and keeps each module independently testable and maintainable.
+- All repositories and services must be instantiated in the composition file with their dependencies injected via the constructor. Do **not** instantiate repositories or services with direct imports of their dependencies inside their own files.
+- Example export:
+  ```js
+  module.exports = {
+    addonController,
+    addonService,
+    addonRepository,
+  };
+  ```
+
+#### Dependency Injection Summary Table
+
+| Layer      | How to Inject Dependencies           | Where to Instantiate     | Anti-pattern Example                 |
+| ---------- | ------------------------------------ | ------------------------ | ------------------------------------ |
+| Repository | Via constructor (e.g., getDB)        | Only in composition file | `const { getDB } = require(...)`     |
+| Service    | Via constructor (repositories, etc.) | Only in composition file | `const repo = new Repo()` in service |
+
+---
+
+## 3. Testability
+
+- **Write testable code**: All code should be designed with testing in mind from the start.
+- **Dependency Injection**: Use dependency injection or clear import structures to make dependencies easily mockable.
+- **Pure Functions**: Prefer pure, stateless functions that have clear inputs and outputs without side effects.
+- **Avoid Side Effects**: Minimize side effects in business logic functions; isolate side effects to specific layers (e.g., repositories, external services).
+- **Single Responsibility**: Each function should have a single, clear purpose that can be tested independently.
+- **Clear Interfaces**: Define clear interfaces and contracts between layers to enable easy mocking and testing.
+- **Avoid Global State**: Minimize the use of global variables or singletons that make testing difficult.
+- **Error Handling**: Design error handling to be testable with clear error types and messages.
+- **Configuration**: Use dependency injection for configuration to allow testing with different environments.
+
+## 4. Notification Handling
+
+- Use `NotificationService` for all notification persistence.
+- All real-time and push notifications must be stored in the database, regardless of delivery channel success.
+- Always include relevant metadata (e.g., `type`, `eventId`, `userId`) in notification records.
+- Use notification factories for message construction (e.g., `PushNotificationFactory`, `SmsFactory`, `EmailFactory`).
+- Schedule notifications using job schedulers (e.g., `node-schedule`) when needed.
+- Ensure notification flows are idempotent and handle delivery failures gracefully.
+
+## 5. Validation
+
+- All endpoints must validate requests using schemas in `src/validators/`.
+- **All request validation must be performed using zod schemas.**
+- All requests (including all API endpoints) must be validated using the appropriate Yup schema before processing.
+- **No validation logic should be present in controllers or services.**
+- **Do not add any validation or request shape checks (e.g., array checks, required fields) or related try/catch blocks in controllers or services. All such logic must be enforced by Yup schemas and validation middleware only. Controllers should assume validated input and let errors bubble up to the global error handler.**
+- **Use enums/constants from `src/constants/` for allowed values and status/type checks.**
+- Ensure IDs referencing DB records are validated as strings but represent numeric IDs.
+- Validate and sanitize all user input to prevent injection and security vulnerabilities.
+
+## 6. Constants
+
+- **All allowed values, enums, and status types must be defined in `src/constants/`.**
+- Create separate files for different domains (e.g., `leadStatuses.js`, `orderStatuses.js`, `userTypes.js`).
+- **Never hardcode allowed values in validators, services, or controllers.**
+- Use constants to ensure consistency across the application and prevent typos.
+- Export constants as named exports for better tree-shaking and clarity.
+- Document constants with clear descriptions and usage examples.
+- Update constants when adding new values and ensure all related validators are updated.
+
+## 7. Migration Practices
+
+- Every schema change requires a new JS migration and matching up/down SQL files in `migrations/sqls/`.
+- **All migrations must use [db-migrate](https://github.com/db-migrate/node-db-migrate).**
+- For each migration, create a JS file in `/migrations` that references the corresponding up/down SQL files in `/migrations/sqls/` using `fs.readFileSync` and `path.join` (not `db.runSqlFile` or `@/migrations`).
+- Example:
+  ```js
+  const fs = require("fs");
+  const path = require("path");
+  exports.up = function (db, callback) {
+    const upSql = fs.readFileSync(
+      path.join(__dirname, "sqls", "20250717000001-some-migration-up.sql"),
+      "utf8"
+    );
+    db.runSql(upSql, callback);
+  };
+  exports.down = function (db, callback) {
+    const downSql = fs.readFileSync(
+      path.join(__dirname, "sqls", "20250717000001-some-migration-down.sql"),
+      "utf8"
+    );
+    db.runSql(downSql, callback);
+  };
+  ```
+- Never modify a migration that has already been run; always create a new one.
+- Test all migrations before production deployment.
+- Write idempotent, reversible migration scripts.
+- Document schema changes and migration rationale in the documentation.
+
+## 8. Error Handling & Observability
+
+- Use the `handleError` utility for all error responses. All errors that require a custom status code must be thrown using `handleError(message, status)`.
+- Never throw raw errors from services or repositories; always wrap with context.
+- Use `globalErrorHandler.js` for centralized error handling.
+- Log errors with enough context for debugging, but never expose sensitive data.
+- Ensure all critical flows have sufficient logging and error reporting for monitoring and alerting.
+- **Use try/catch blocks only where required; rely on the global error handler for API errors to bubble up and be handled centrally.**
+
+## 9. Service Layer
+
+- All business logic must reside in service classes (e.g., `LeadService`, `OrderService`).
+- Services should emit events or notifications for significant actions (creation, update, status change).
+- Use dependency injection or clear import structure for all dependencies.
+- Service methods should be modular, single-responsibility, and easy to test.
+- Avoid side effects in service methods unless explicitly required.
+- Document all public service methods and their expected inputs/outputs.
+- **Do not add any validation or try/catch blocks for request shape/fields in services. All such logic must be enforced by Yup schemas and validation middleware only. Services should assume validated input and let errors bubble up to the global error handler, except when adding business-context to errors (not for validation).**
+
+## 10. Repository Layer
+
+- All database access must go through repository classes.
+- Use transactions for multi-step or multi-table updates to ensure data consistency.
+- Build dynamic queries to only update provided fields.
+- Never expose raw SQL or sensitive DB errors to the client.
+- Validate user ownership and permissions before updates or deletes.
+- Repositories should be stateless and reusable.
+- All repositories must use `getDB()` from `dbConnection` to obtain the connection pool, and support transaction/connection injection for transactional operations.
+
+## 11. Utilities
+
+- Use utility modules for cross-cutting concerns (e.g., error handling, logging, CSV processing).
+- Avoid duplicating logic; centralize in utilities when possible.
+- Write pure, stateless utility functions where possible.
+- Document utility functions with clear input/output and usage notes.
+
+## 12. Documentation
+
+- Document all public API endpoints with clear descriptions of expected inputs and outputs.
+- Maintain up-to-date API documentation for external consumers.
+- Document complex business logic and algorithms with clear explanations.
+- Keep README files updated with setup instructions and project overview.
+- Document configuration options and environment variables.
+- Provide clear error messages and troubleshooting guides.
+
+## 13. Backward Compatibility
+
+- When modifying existing modules, always ensure backward compatibility.
+- Do not introduce breaking changes such as altering endpoint response payloads, request schemas, or removing fields in a way that breaks existing API consumers.
+- New fields should be optional and not break existing flows.
+- Clearly document any breaking changes and provide migration/upgrade instructions.
+
+## 14. Security
+
+- Never log or expose sensitive data (passwords, tokens, PII) in logs or error messages.
+- Use secure password hashing and token generation for all authentication flows.
+- Validate and sanitize all user input to prevent injection attacks.
+- Use environment variables for all secrets and environment-specific config.
+- Regularly review dependencies for vulnerabilities.
+
+## 15. Scalability & Reliability
+
+- Design modules and flows to handle increased load and concurrent usage.
+- Use asynchronous patterns and job queues for long-running or high-volume tasks.
+- Ensure all scheduled jobs and background processes are idempotent and recoverable.
+- Monitor and optimize database queries for performance.
+- Use connection pooling and efficient resource management.
+- Implement retry logic and circuit breakers for external service calls where appropriate.
+
+## 16. Contribution
+
+- Write clear, maintainable code with comments where necessary.
+- Submit pull requests with clear descriptions.
+- Follow the project structure and coding standards.
+- Review code for adherence to these rules and principles before approving.
+- Propose updates to `.cursorrules` as the codebase evolves or new patterns emerge.
+
+## 17. API Design & Implementation
+
+- All API endpoints must be defined in route files in `src/app/routes/` or `src/routes/`.
+- Controllers (in `src/app/controllers/` or `src/controllers/`) should only handle API logic, request/response orchestration, and call service methods.
+- All business logic must reside in service classes (in `src/app/services/`).
+- All database access must go through repository classes (in `src/app/repositories/`).
+- All request validation must use schemas in `src/validators/`.
+- Controllers should not contain business logic or direct DB access.
+- Use async/await for all asynchronous operations.
+- Return responses using a response factory or consistent response structure.
+- Follow RESTful conventions for endpoint naming and HTTP methods.
+- Document all public endpoints and their expected inputs/outputs.
+
+## 18. Database Query Best Practices
+
+- Never use SELECT \* in SQL queries. Always explicitly specify the required columns.
+
+## 19. Scheduled Jobs & Background Tasks
+
+- All scheduled/recurring jobs (e.g., cron jobs, background processors) **must be registered and run from the main entry point (e.g., index.js)**.
+- Do not rely on running job scripts manually or as separate processes unless explicitly required for scaling.
+- This ensures all jobs are reliably started, monitored, and maintained as part of the main application lifecycle.
+
+## 20. Async Error Handling Standardization
+
+- All public controller methods must be wrapped with `asyncHandler` as instance properties inside the controller class.
+- Do **not** wrap controller methods with `asyncHandler` in the route files; use the controller methods directly in routes.
+- This ensures consistent error handling, prevents double-wrapping, and matches the DI/composition pattern.
+- Example:
+  ```js
+  // In controller:
+  class MyController {
+    constructor() {
+      this.myMethod = asyncHandler(this.myMethod.bind(this));
+    }
+    async myMethod(req, res) {
+      /* ... */
+    }
+  }
+  // In route:
+  router.get("/endpoint", myController.myMethod);
+  ```
+
+---
+
+**These rules are mandatory for all contributors and reviewers. The goal is to ensure a robust, maintainable, scalable, and reliable backend system that follows best practices and industry standards. Update this file as the codebase evolves.**
